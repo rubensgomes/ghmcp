@@ -14,7 +14,11 @@ Usage:
 from mcp.server import Server
 from ghmcp.utility import get_repo
 import os
-from typing import List
+import logging
+from typing import List, Dict, Any, Optional
+
+# Configure logging for this module
+logger = logging.getLogger(__name__)
 
 class GitHubRepoIndexer:
     """
@@ -36,10 +40,25 @@ class GitHubRepoIndexer:
         libraries = indexer.list_libraries()
     """
     def __init__(self, repo_paths: List[str]):
-        self.repo_paths = repo_paths
-        self.repos = [get_repo(path) for path in repo_paths if get_repo(path)]
+        logger.info(f"Initializing GitHubRepoIndexer with {len(repo_paths)} repository paths")
+        logger.debug(f"Repository paths: {repo_paths}")
 
-    def list_libraries(self):
+        self.repo_paths = repo_paths
+        self.repos = []
+
+        # Index repositories and log results
+        for path in repo_paths:
+            logger.debug(f"Attempting to get repository from path: {path}")
+            repo = get_repo(path)
+            if repo:
+                self.repos.append(repo)
+                logger.info(f"Successfully indexed repository: {path}")
+            else:
+                logger.warning(f"Failed to index repository at path: {path}")
+
+        logger.info(f"GitHubRepoIndexer initialized with {len(self.repos)} valid repositories out of {len(repo_paths)} paths")
+
+    def list_libraries(self) -> List[Dict[str, Any]]:
         """
         Generate a list of library metadata for all indexed repositories.
 
@@ -49,72 +68,124 @@ class GitHubRepoIndexer:
 
         Returns:
             List[Dict[str, Any]]: List of dictionaries containing repository metadata.
-                Each dictionary contains:
-                - 'name' (str): Repository name (basename of directory)
-                - 'path' (str): Full filesystem path to repository
-                - 'branches' (List[str]): List of branch names in the repository
+            Each dictionary contains:
+                - 'name': Repository name (directory name)
+                - 'path': Full filesystem path to repository
+                - 'branches': List of available branch names
 
         Example:
             [
                 {
                     'name': 'my-project',
                     'path': '/Users/user/repos/my-project',
-                    'branches': ['main', 'develop', 'feature-branch']
+                    'branches': ['main', 'develop', 'feature-x']
                 }
             ]
         """
+        logger.info(f"Generating library list for {len(self.repos)} repositories")
         libraries = []
+
         for repo in self.repos:
-            if repo:
-                libraries.append({
-                    'name': os.path.basename(repo.working_tree_dir),
-                    'path': repo.working_tree_dir,
-                    'branches': [b.name for b in repo.branches]
-                })
+            try:
+                logger.debug(f"Processing repository: {repo.working_dir}")
+
+                # Extract repository name from directory path
+                repo_name = os.path.basename(repo.working_dir)
+                logger.debug(f"Repository name: {repo_name}")
+
+                # Get available branches
+                branches = [ref.name.replace('origin/', '') for ref in repo.refs if 'origin/' in ref.name]
+                if not branches:
+                    # Fallback to local branches if no remote branches found
+                    branches = [head.name for head in repo.heads]
+
+                logger.debug(f"Found {len(branches)} branches for {repo_name}: {branches}")
+
+                library_info = {
+                    'name': repo_name,
+                    'path': repo.working_dir,
+                    'branches': branches
+                }
+
+                libraries.append(library_info)
+                logger.info(f"Added library info for repository: {repo_name}")
+
+            except Exception as e:
+                logger.error(f"Error processing repository {repo.working_dir}: {e}")
+                continue
+
+        logger.info(f"Successfully generated library list with {len(libraries)} entries")
         return libraries
+
 
 class MCPGitHubServer(Server):
     """
-    MCP (Model Context Protocol) server for indexing and querying GitHub repositories.
+    MCP server implementation for GitHub repository indexing and querying.
 
-    This server extends the base MCP Server class to provide Git repository indexing
-    capabilities. It uses GitHubRepoIndexer to scan local repositories and exposes
-    methods that MCP clients can use to query repository information.
+    This server extends the base MCP Server class to provide GitHub repository
+    indexing capabilities. It uses GitHubRepoIndexer to scan and index local
+    Git repositories, making their metadata available to MCP clients.
 
     Attributes:
-        indexer (GitHubRepoIndexer): The repository indexer instance used to scan and catalog repositories.
+        indexer (GitHubRepoIndexer): Repository indexer instance.
+        name (str): Server name identifier.
 
     Args:
         repo_paths (List[str]): List of filesystem paths to Git repositories to index.
-        name (str, optional): Name identifier for the MCP server. Defaults to "ghmcp-server".
-        *args: Additional positional arguments passed to the base Server class.
-        **kwargs: Additional keyword arguments passed to the base Server class.
+        name (str, optional): Server name identifier. Defaults to "ghmcp-server".
+        *args: Additional arguments passed to parent Server class.
+        **kwargs: Additional keyword arguments passed to parent Server class.
 
     Example:
-        server = MCPGitHubServer(['/path/to/repo1', '/path/to/repo2'], name="my-github-server")
+        server = MCPGitHubServer(['/path/to/repo1', '/path/to/repo2'], name="my-server")
         libraries = server.query_libraries()
     """
     def __init__(self, repo_paths: List[str], name: str = "ghmcp-server", *args, **kwargs):
-        super().__init__(name, *args, **kwargs)
-        self.indexer = GitHubRepoIndexer(repo_paths)
+        logger.info(f"Initializing MCPGitHubServer '{name}' with {len(repo_paths)} repository paths")
+        logger.debug(f"Server args: {args}, kwargs: {kwargs}")
 
-    def query_libraries(self):
+        super().__init__(*args, **kwargs)
+        self.name = name
+
+        try:
+            logger.info("Creating GitHubRepoIndexer instance")
+            self.indexer = GitHubRepoIndexer(repo_paths)
+            logger.info(f"MCPGitHubServer '{name}' initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize MCPGitHubServer '{name}': {e}")
+            raise
+
+    def query_libraries(self) -> List[Dict[str, Any]]:
         """
-        Query and return metadata for all indexed Git repositories.
+        Query and return metadata for all indexed libraries.
 
-        This method delegates to the internal GitHubRepoIndexer to retrieve
-        a list of repository metadata that can be consumed by MCP clients.
+        Delegates to the GitHubRepoIndexer to generate a list of library metadata
+        for all successfully indexed Git repositories.
 
         Returns:
-            List[Dict[str, Any]]: List of dictionaries containing repository metadata.
-                Each dictionary contains:
-                - 'name' (str): Repository name (basename of directory)
-                - 'path' (str): Full filesystem path to repository
-                - 'branches' (List[str]): List of branch names in the repository
+            List[Dict[str, Any]]: List of library metadata dictionaries.
+            Each dictionary contains repository name, path, and available branches.
+
+        Raises:
+            RuntimeError: If the indexer is not properly initialized.
 
         Example:
             server = MCPGitHubServer(['/path/to/repo'])
             libraries = server.query_libraries()
-            # Returns: [{'name': 'repo', 'path': '/path/to/repo', 'branches': ['main']}]
+            print(f"Found {len(libraries)} libraries")
         """
-        return self.indexer.list_libraries()
+        logger.info(f"Querying libraries from MCPGitHubServer '{self.name}'")
+
+        if not hasattr(self, 'indexer') or self.indexer is None:
+            error_msg = "GitHubRepoIndexer is not initialized"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        try:
+            libraries = self.indexer.list_libraries()
+            logger.info(f"Successfully queried {len(libraries)} libraries from server '{self.name}'")
+            logger.debug(f"Library names: {[lib['name'] for lib in libraries]}")
+            return libraries
+        except Exception as e:
+            logger.error(f"Error querying libraries from server '{self.name}': {e}")
+            raise

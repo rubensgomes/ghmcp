@@ -5,7 +5,7 @@
 # Bash script to start the MCP GitHub server using the start_server function
 #
 # This script provides a command-line interface to launch the MCP GitHub server
-# with configurable options for server name, host, port, and repository paths.
+# with configurable options for server name, host, port, repository paths, and logging level.
 # It automatically detects and uses Poetry if available, otherwise falls back
 # to system Python.
 #
@@ -27,6 +27,7 @@ DEFAULT_NAME="ghmcp-server"        # Default server name identifier
 DEFAULT_HOST="localhost"           # Default host to bind server to
 DEFAULT_PORT="8000"               # Default port number
 DEFAULT_REPOS="$PWD"              # Default to current working directory
+DEFAULT_LOG_LEVEL="INFO"          # Default logging level
 
 # =============================================================================
 # HELP AND USAGE FUNCTIONS
@@ -44,12 +45,22 @@ usage() {
     echo "  -h, --host HOST        Server host (default: $DEFAULT_HOST)"
     echo "  -p, --port PORT        Server port (default: $DEFAULT_PORT)"
     echo "  -r, --repos PATHS      Comma-separated repository paths (default: current directory)"
+    echo "  -l, --log-level LEVEL  Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: $DEFAULT_LOG_LEVEL)"
     echo "  --help                 Show this help message"
     echo ""
     echo "EXAMPLES:"
     echo "  $0                                    # Start with current directory"
     echo "  $0 -r /path/to/repo1,/path/to/repo2  # Start with specific repositories"
     echo "  $0 -n my-server -p 9000             # Start with custom name and port"
+    echo "  $0 -l DEBUG                         # Start with debug logging"
+    echo "  $0 -l WARNING -r /my/repos          # Start with warning level and custom repos"
+    echo ""
+    echo "LOGGING LEVELS:"
+    echo "  DEBUG     - Detailed information for debugging"
+    echo "  INFO      - General information about server operations"
+    echo "  WARNING   - Warning messages for potential issues"
+    echo "  ERROR     - Error messages for serious problems"
+    echo "  CRITICAL  - Critical error messages"
     echo ""
 }
 
@@ -62,6 +73,7 @@ NAME="$DEFAULT_NAME"
 HOST="$DEFAULT_HOST"
 PORT="$DEFAULT_PORT"
 REPOS="$DEFAULT_REPOS"
+LOG_LEVEL="$DEFAULT_LOG_LEVEL"
 
 # Parse command line arguments using a while loop
 # This allows for flexible argument ordering and validation
@@ -81,6 +93,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -r|--repos)
             REPOS="$2"
+            shift 2
+            ;;
+        -l|--log-level)
+            LOG_LEVEL="$2"
             shift 2
             ;;
         --help)
@@ -104,6 +120,16 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; th
     echo "Error: Port must be a number between 1 and 65535"
     exit 1
 fi
+
+# Validate logging level is one of the accepted values
+VALID_LOG_LEVELS=("DEBUG" "INFO" "WARNING" "ERROR" "CRITICAL")
+LOG_LEVEL_UPPER=$(echo "$LOG_LEVEL" | tr '[:lower:]' '[:upper:]')
+if [[ ! " ${VALID_LOG_LEVELS[@]} " =~ " ${LOG_LEVEL_UPPER} " ]]; then
+    echo "Error: Invalid logging level '$LOG_LEVEL'"
+    echo "Valid levels are: ${VALID_LOG_LEVELS[*]}"
+    exit 1
+fi
+LOG_LEVEL="$LOG_LEVEL_UPPER"  # Use uppercase for consistency
 
 # =============================================================================
 # DATA PROCESSING
@@ -131,9 +157,21 @@ PYTHON_REPO_LIST+="]"
 PYTHON_SCRIPT=$(cat << EOF
 import sys
 import os
+import logging
 
 # Add project root to Python path so we can import ghmcp modules
 sys.path.insert(0, '$PROJECT_ROOT')
+
+# Configure logging before importing our modules
+# This ensures all loggers use the specified level
+logging.basicConfig(
+    level=logging.$LOG_LEVEL,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# Create a logger for this script
+logger = logging.getLogger('start_mcp_server')
 
 from ghmcp.main import start_server
 
@@ -142,22 +180,30 @@ repo_paths = $PYTHON_REPO_LIST
 name = '$NAME'
 host = '$HOST'
 port = $PORT
+log_level = '$LOG_LEVEL'
 
 # Display configuration before starting
-print(f"Starting MCP GitHub server with configuration:")
-print(f"  Name: {name}")
-print(f"  Host: {host}")
-print(f"  Port: {port}")
-print(f"  Repositories: {repo_paths}")
-print()
+logger.info("Starting MCP GitHub server with configuration:")
+logger.info(f"  Name: {name}")
+logger.info(f"  Host: {host}")
+logger.info(f"  Port: {port}")
+logger.info(f"  Log Level: {log_level}")
+logger.info(f"  Repositories: {repo_paths}")
 
 try:
     # Call the start_server function with our configuration
+    logger.info("Initializing server...")
     server = start_server(repo_paths, name=name, host=host, port=port)
-    print(f"Server started successfully!")
-    print(f"Indexed {len(server.query_libraries())} repositories")
-    print()
-    print("Server is running. Press Ctrl+C to stop.")
+
+    logger.info("Server started successfully!")
+    libraries = server.query_libraries()
+    logger.info(f"Indexed {len(libraries)} repositories")
+
+    if log_level == 'DEBUG':
+        for lib in libraries:
+            logger.debug(f"  Repository: {lib['name']} at {lib['path']} with {len(lib['branches'])} branches")
+
+    logger.info("Server is running. Press Ctrl+C to stop.")
 
     # Keep the server running indefinitely
     import time
@@ -166,13 +212,13 @@ try:
             time.sleep(1)  # Sleep to reduce CPU usage
     except KeyboardInterrupt:
         # Handle Ctrl+C gracefully
-        print("\nShutting down server...")
+        logger.info("Shutdown signal received...")
         from ghmcp.main import stop_server
         stop_server(server)
-        print("Server stopped.")
+        logger.info("Server stopped successfully.")
 
 except Exception as e:
-    print(f"Error starting server: {e}")
+    logger.error(f"Error starting server: {e}")
     sys.exit(1)
 EOF
 )
