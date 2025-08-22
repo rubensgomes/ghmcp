@@ -75,7 +75,7 @@ environments.
 
    ```shell
    cd $(git rev-parse --show-toplevel) || exit
-   poetry run pylint rescreener || {
+   poetry run pylint ghmcp || {
      printf "failed pylint.\n" >&2
      sleep 60
      exit

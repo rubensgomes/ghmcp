@@ -1,25 +1,30 @@
-import git
-from pathlib import Path
-import tempfile
+"""
+utility.py
+----------
+Provides utility functions for working with Git repositories using GitPython.
 
-# Where repos will be cloned locally
-CLONE_DIR = Path(tempfile.gettempdir()) / "github_repos"
-CLONE_DIR.mkdir(parents=True, exist_ok=True)
+Functions:
+    get_repo(path: str) -> Optional[Repo]:
+        Returns a GitPython Repo object for the given path if it is a valid git repo, else None.
+        - path: The filesystem path to the repository.
+        - Returns: Repo object if valid, None otherwise.
 
-# Keep a cache of repo paths
-repo_cache = {}
+Usage:
+    from ghmcp.utility import get_repo
+    repo = get_repo('/path/to/repo')
+"""
 
-# Utility: clone or update a repo
-def get_repo(repo_url: str) -> Path:
-    repo_name = repo_url.split("/")[-1].replace(".git", "")
-    repo_path = CLONE_DIR / repo_name
+from git import Repo
+from typing import Optional
+import os
 
-    if repo_name not in repo_cache:
-        if not repo_path.exists():
-            git.Repo.clone_from(repo_url, repo_path)
-        else:
-            repo = git.Repo(repo_path)
-            repo.remotes.origin.pull()
-        repo_cache[repo_name] = repo_path
-
-    return repo_cache[repo_name]
+def get_repo(path: str) -> Optional[Repo]:
+    """
+    Returns a GitPython Repo object for the given path if it is a valid git repo, else None.
+    """
+    if not os.path.isdir(path):
+        return None
+    try:
+        return Repo(path)
+    except Exception:
+        return None
