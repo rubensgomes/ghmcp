@@ -1,7 +1,5 @@
-import os
 import tempfile
 import shutil
-import pytest
 from git import Repo
 from ghmcp.utility import get_repo
 
@@ -21,4 +19,3 @@ def test_get_repo_not_a_repo():
     repo = get_repo(temp_dir)
     assert repo is None
     shutil.rmtree(temp_dir)
-
