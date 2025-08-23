@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "ghmcp": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "ghmcp.main",
+        "--stdio",
+        "--repos",
+        "/Users/rubens/dev/java/ms-reqresp-lib",
+        "/Users/rubens/dev/kotlin/ms-ex-lib",
+        "--log-level",
+        "DEBUG"
+      ],
+      "cwd": "/Users/rubens/dev/python/ghmcp",
+      "env": {
+        "DANGEROUSLY_OMIT_AUTH": true,
+        "PYTHONPATH": "/Users/rubens/dev/python/ghmcp"
+      }
+    }
+  }
+}

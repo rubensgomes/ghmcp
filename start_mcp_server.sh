@@ -46,14 +46,21 @@ usage() {
     echo "  -p, --port PORT        Server port (default: $DEFAULT_PORT)"
     echo "  -r, --repos PATHS      Comma-separated repository paths (default: current directory)"
     echo "  -l, --log-level LEVEL  Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: $DEFAULT_LOG_LEVEL)"
+    echo "  -s, --stdio            Run the server in stdio mode for MCP client communication"
     echo "  --help                 Show this help message"
     echo ""
     echo "EXAMPLES:"
-    echo "  $0                                    # Start with current directory"
+    echo "  $0                                    # Start with current directory (standard mode)"
     echo "  $0 -r /path/to/repo1,/path/to/repo2  # Start with specific repositories"
     echo "  $0 -n my-server -p 9000             # Start with custom name and port"
     echo "  $0 -l DEBUG                         # Start with debug logging"
     echo "  $0 -l WARNING -r /my/repos          # Start with warning level and custom repos"
+    echo "  $0 --stdio                          # Start in stdio mode for MCP clients"
+    echo "  $0 --stdio --repos /my/repos        # Start in stdio mode with custom repos"
+    echo ""
+    echo "MODES:"
+    echo "  Standard Mode - Regular server operation for direct interaction"
+    echo "  Stdio Mode    - Communicate via stdin/stdout for MCP client integration"
     echo ""
     echo "LOGGING LEVELS:"
     echo "  DEBUG     - Detailed information for debugging"
@@ -74,6 +81,7 @@ HOST="$DEFAULT_HOST"
 PORT="$DEFAULT_PORT"
 REPOS="$DEFAULT_REPOS"
 LOG_LEVEL="$DEFAULT_LOG_LEVEL"
+STDIO_MODE=false
 
 # Parse command line arguments using a while loop
 # This allows for flexible argument ordering and validation
@@ -98,6 +106,10 @@ while [[ $# -gt 0 ]]; do
         -l|--log-level)
             LOG_LEVEL="$2"
             shift 2
+            ;;
+        -s|--stdio)
+            STDIO_MODE=true
+            shift 1
             ;;
         --help)
             usage
@@ -152,9 +164,56 @@ PYTHON_REPO_LIST+="]"
 # PYTHON SCRIPT GENERATION
 # =============================================================================
 
-# Create embedded Python script that will call the start_server function
+# Create embedded Python script that will call the appropriate server function
 # This approach allows us to pass shell variables into Python context
-PYTHON_SCRIPT=$(cat << EOF
+if [ "$STDIO_MODE" = true ]; then
+    # Create Python script for stdio mode
+    PYTHON_SCRIPT=$(cat << EOF
+import sys
+import os
+import logging
+import asyncio
+
+# Add project root to Python path so we can import ghmcp modules
+sys.path.insert(0, '$PROJECT_ROOT')
+
+# Configure logging before importing our modules
+# This ensures all loggers use the specified level
+logging.basicConfig(
+    level=logging.$LOG_LEVEL,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# Create a logger for this script
+logger = logging.getLogger('start_mcp_server')
+
+from ghmcp.server import run_stdio_server
+
+# Configuration from shell script arguments
+repo_paths = $PYTHON_REPO_LIST
+name = '$NAME'
+log_level = '$LOG_LEVEL'
+
+# Display configuration before starting
+logger.info("Starting MCP GitHub server in stdio mode with configuration:")
+logger.info(f"  Name: {name}")
+logger.info(f"  Log Level: {log_level}")
+logger.info(f"  Repositories: {repo_paths}")
+
+try:
+    # Run the server in stdio mode
+    logger.info("Starting stdio server...")
+    asyncio.run(run_stdio_server(repo_paths, name=name))
+
+except Exception as e:
+    logger.error(f"Error starting stdio server: {e}")
+    sys.exit(1)
+EOF
+)
+else
+    # Create Python script for standard mode
+    PYTHON_SCRIPT=$(cat << EOF
 import sys
 import os
 import logging
@@ -222,6 +281,7 @@ except Exception as e:
     sys.exit(1)
 EOF
 )
+fi
 
 # =============================================================================
 # EXECUTION

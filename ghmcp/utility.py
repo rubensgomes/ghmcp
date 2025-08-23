@@ -93,21 +93,39 @@ def get_repo(path: str) -> Optional[Repo]:
         except Exception as e:
             logger.debug(f"Could not retrieve remote information: {e}")
 
+        # Log branch information
+        try:
+            branches = [head.name for head in repo.heads]
+            logger.debug(f"Local branches: {branches}")
+        except Exception as e:
+            logger.debug(f"Could not retrieve branch information: {e}")
+
+        # Log commit count if possible
+        try:
+            commit_count = len(list(repo.iter_commits()))
+            logger.debug(f"Total commits in repository: {commit_count}")
+        except Exception as e:
+            logger.debug(f"Could not count commits: {e}")
+
         logger.info(f"Successfully created Repo object for: {abs_path}")
         return repo
 
     except InvalidGitRepositoryError as e:
         logger.warning(f"Invalid Git repository at {abs_path}: {e}")
+        logger.debug(f"InvalidGitRepositoryError details:", exc_info=True)
         return None
 
     except NoSuchPathError as e:
-        logger.warning(f"Path not found when creating repository: {abs_path}: {e}")
+        logger.warning(f"Path not found when creating Repo object: {abs_path}: {e}")
+        logger.debug(f"NoSuchPathError details:", exc_info=True)
         return None
 
     except PermissionError as e:
         logger.error(f"Permission denied accessing repository at {abs_path}: {e}")
+        logger.debug(f"PermissionError details:", exc_info=True)
         return None
 
     except Exception as e:
-        logger.error(f"Unexpected error creating repository object for {abs_path}: {e}")
+        logger.error(f"Unexpected error when creating Repo object for {abs_path}: {e}")
+        logger.debug(f"Unexpected error details:", exc_info=True)
         return None

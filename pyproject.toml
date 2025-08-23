@@ -6,7 +6,7 @@ build-backend = "poetry.core.masonry.api"
 name = "ghmcp"
 version = "0.0.1"
 dependencies = [
-    "mcp (>=1.13.0)",
+    "mcp (>=1.13.1)",
     "GitPython (>=3.1.45)"
 ]
 requires-python = ">=3.13,<3.14"

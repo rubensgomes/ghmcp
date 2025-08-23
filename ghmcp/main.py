@@ -23,15 +23,36 @@ Usage:
     stop_server(server)
 """
 
+import argparse
 import asyncio
 import signal
 import sys
 from typing import List, Optional
-from ghmcp.server import MCPGitHubServer
+from ghmcp.server import MCPGitHubServer, run_stdio_server
 import logging
+import os
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+def configure_logging(level: str = "INFO") -> None:
+    """
+    Configure logging for the application.
+
+    Args:
+        level (str): Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    """
+    # Convert string level to logging constant
+    numeric_level = getattr(logging, level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError(f'Invalid log level: {level}')
+
+    # Configure logging with detailed format
+    logging.basicConfig(
+        level=numeric_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        force=True  # Override any existing configuration
+    )
+
+# Initialize logger after configuration
 logger = logging.getLogger(__name__)
 
 # Global server instance for signal handling
@@ -60,28 +81,33 @@ def start_server(repo_paths: List[str], name: str = "ghmcp-server", host: str = 
 
     Example:
         server = start_server(['/Users/user/repos/project1', '/Users/user/repos/project2'])
-        print(f"Server started with {len(server.query_libraries())} repositories indexed")
+        print(f"Server started with {len(server.indexer.repos)} repositories indexed")
     """
     global _server_instance
 
     logger.info(f"Starting MCP GitHub server '{name}' on {host}:{port}")
     logger.info(f"Indexing repositories: {repo_paths}")
+    logger.debug(f"Server configuration - name: {name}, host: {host}, port: {port}")
 
     try:
-        # Create server instance
+        # Create server instance with explicit name parameter
+        logger.debug("Creating MCPGitHubServer instance...")
         server = MCPGitHubServer(repo_paths, name=name)
         _server_instance = server
 
         # Validate that repositories were found
-        libraries = server.query_libraries()
-        if not libraries:
+        logger.debug("Validating indexed repositories...")
+        if not server.indexer.repos:
             raise ValueError("No valid Git repositories found in the provided paths")
 
-        logger.info(f"Successfully indexed {len(libraries)} repositories:")
-        for lib in libraries:
-            logger.info(f"  - {lib['name']} ({lib['path']}) - {len(lib['branches'])} branches")
+        logger.info(f"Successfully indexed {len(server.indexer.repos)} repositories:")
+        for repo in server.indexer.repos:
+            repo_name = os.path.basename(repo.working_dir)
+            logger.info(f"  - {repo_name} ({repo.working_dir})")
+            logger.debug(f"    Repository working directory: {repo.working_dir}")
 
         # Set up signal handlers for graceful shutdown
+        logger.debug("Setting up signal handlers...")
         signal.signal(signal.SIGINT, _signal_handler)
         signal.signal(signal.SIGTERM, _signal_handler)
 
@@ -90,6 +116,7 @@ def start_server(repo_paths: List[str], name: str = "ghmcp-server", host: str = 
 
     except Exception as e:
         logger.error(f"Failed to start server: {e}")
+        logger.debug(f"Server startup error details:", exc_info=True)
         raise RuntimeError(f"Server startup failed: {e}") from e
 
 def stop_server(server: MCPGitHubServer) -> None:
@@ -115,6 +142,7 @@ def stop_server(server: MCPGitHubServer) -> None:
 
     try:
         logger.info(f"Stopping MCP GitHub server...")
+        logger.debug(f"Stopping server with name: {getattr(server, 'name', 'unknown')}")
 
         # Clear global reference
         if _server_instance == server:
@@ -126,6 +154,7 @@ def stop_server(server: MCPGitHubServer) -> None:
 
     except Exception as e:
         logger.error(f"Error stopping server: {e}")
+        logger.debug("Server stop error details:", exc_info=True)
         raise
 
 def _signal_handler(signum: int, frame) -> None:
@@ -137,39 +166,143 @@ def _signal_handler(signum: int, frame) -> None:
         frame: The current stack frame.
     """
     logger.info(f"Received signal {signum}, shutting down gracefully...")
+    logger.debug(f"Signal handler called with signum={signum}")
 
     if _server_instance:
         stop_server(_server_instance)
 
     sys.exit(0)
 
+def parse_arguments() -> argparse.Namespace:
+    """
+    Parse command line arguments for the MCP GitHub server.
+
+    Returns:
+        argparse.Namespace: Parsed command line arguments
+    """
+    parser = argparse.ArgumentParser(
+        description="MCP GitHub Server - Index and serve Git repositories via MCP protocol",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                                    # Start with current directory (standard mode)
+  %(prog)s --repos /path/to/repo1 /path/to/repo2  # Start with specific repositories
+  %(prog)s --name my-server --port 9000      # Start with custom name and port
+  %(prog)s --log-level DEBUG                 # Start with debug logging
+  %(prog)s --stdio                           # Start in stdio mode for MCP clients
+  %(prog)s --stdio --repos /my/repos         # Start in stdio mode with custom repos
+  %(prog)s --log-level WARNING --repos /my/repos  # Start with warning level and custom repos
+
+Modes:
+  Standard Mode - Regular server operation for direct interaction
+  Stdio Mode    - Communicate via stdin/stdout for MCP client integration
+
+Logging Levels:
+  DEBUG     - Detailed information for debugging
+  INFO      - General information about server operations (default)
+  WARNING   - Warning messages for potential issues
+  ERROR     - Error messages for serious problems
+  CRITICAL  - Critical error messages
+        """
+    )
+
+    parser.add_argument(
+        '--name', '-n',
+        type=str,
+        default='ghmcp-server',
+        help='Server name identifier (default: ghmcp-server)'
+    )
+
+    parser.add_argument(
+        '--host', '-H',
+        type=str,
+        default='localhost',
+        help='Server host address (default: localhost)'
+    )
+
+    parser.add_argument(
+        '--port', '-p',
+        type=int,
+        default=8000,
+        help='Server port number (default: 8000)'
+    )
+
+    parser.add_argument(
+        '--repos', '-r',
+        type=str,
+        nargs='*',
+        help='Repository paths to index (default: current directory)'
+    )
+
+    parser.add_argument(
+        '--log-level', '-l',
+        type=str,
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+        default='INFO',
+        help='Logging level (default: INFO)'
+    )
+
+    parser.add_argument(
+        '--stdio', '-s',
+        action='store_true',
+        help='Run the server in stdio mode for MCP client communication'
+    )
+
+    return parser.parse_args()
+
 def main() -> None:
     """
     Main entry point for the MCP GitHub server application.
 
-    This function can be used as a command-line entry point to start the server
-    with default configuration. For more control, use start_server() directly.
+    This function parses command line arguments and starts the server
+    with the specified configuration. Supports both regular mode and
+    stdio mode for MCP client communication.
     """
     import os
 
-    # Default to current directory if no specific repos are provided
-    default_repos = [os.getcwd()]
+    # Parse command line arguments
+    args = parse_arguments()
+
+    # Configure logging based on command line argument
+    configure_logging(args.log_level)
+
+    logger.info("Starting MCP GitHub server application")
+    logger.debug(f"Command line arguments: {vars(args)}")
+
+    # Use provided repos or default to current directory
+    repo_paths = args.repos if args.repos else [os.getcwd()]
+
+    logger.info(f"Configuration:")
+    logger.info(f"  Name: {args.name}")
+    logger.info(f"  Mode: {'stdio' if args.stdio else 'standard'}")
+    logger.info(f"  Host: {args.host}")
+    logger.info(f"  Port: {args.port}")
+    logger.info(f"  Log Level: {args.log_level}")
+    logger.info(f"  Repositories: {repo_paths}")
 
     try:
-        server = start_server(default_repos)
-        logger.info("Server is running. Press Ctrl+C to stop.")
+        if args.stdio:
+            # Run in stdio mode for MCP client communication
+            logger.info("Running server in stdio mode")
+            asyncio.run(run_stdio_server(repo_paths, name=args.name))
+        else:
+            # Run in standard mode
+            logger.info("Running server in standard mode")
+            server = start_server(repo_paths, name=args.name, host=args.host, port=args.port)
+            logger.info("Server is running. Press Ctrl+C to stop.")
 
-        # Keep the main thread alive
-        try:
-            while True:
-                asyncio.sleep(1)
-        except KeyboardInterrupt:
-            logger.info("Keyboard interrupt received")
-        finally:
-            stop_server(server)
+            # Keep the main thread alive
+            try:
+                while True:
+                    asyncio.sleep(1)
+            except KeyboardInterrupt:
+                logger.info("Keyboard interrupt received")
+            finally:
+                stop_server(server)
 
     except Exception as e:
         logger.error(f"Server failed: {e}")
+        logger.debug("Main function error details:", exc_info=True)
         sys.exit(1)
 
 if __name__ == "__main__":
